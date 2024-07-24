@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebRTC with YOLOv8</title>
+    <style>
+        .container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        .image-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .image-container img, .image-container video {
+            margin: 0 10px;
+        }
+        .summary {
+            text-align: center;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebRTC with YOLOv8</h1>
+    <div class="container">
+        <div class="image-container">
+            <video id="video" width="640" height="480" autoplay></video>
+            <div id="receivedImages"></div>
+        </div>
+        <pre id="summaryText" class="summary"></pre>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const receivedImagesDiv = document.getElementById('receivedImages');
+        const summaryText = document.getElementById('summaryText');
+        const ws = new WebSocket('wss://' + window.location.host + '/ws');
+
+        ws.onopen = function() {
+            console.log('WebSocket connection opened');
+        };
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+
+            // Display image
+            const imageBlob = b64toBlob(data.image, 'image/jpeg');
+            const url = URL.createObjectURL(imageBlob);
+            const img = document.createElement('img');
+            img.src = url;
+            img.onload = function() {
+                URL.revokeObjectURL(url);
+            };
+            receivedImagesDiv.innerHTML = '';
+            receivedImagesDiv.appendChild(img);
+
+            // Display summary text
+            summaryText.textContent = data.summary;
+        };
+
+        ws.onclose = function() {
+            console.log('WebSocket connection closed');
+        };
+
+        // Access webcam stream
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+                const track = stream.getVideoTracks()[0];
+                const imageCapture = new ImageCapture(track);
+                setInterval(() => {
+                    imageCapture.grabFrame()
+                        .then(imageBitmap => {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = imageBitmap.width;
+                            canvas.height = imageBitmap.height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(imageBitmap, 0, 0);
+                            canvas.toBlob(blob => {
+                                blob.arrayBuffer().then(buffer => {
+                                    ws.send(buffer);
+                                });
+                            }, 'image/jpeg');
+                        })
+                        .catch(err => console.error('Error grabbing frame:', err));
+                }, 1000);  // Send frame every 1 second
+            })
+            .catch(err => {
+                console.error('Error accessing camera: ', err);
+            });
+
+        // Helper function to convert base64 to Blob
+        function b64toBlob(b64Data, contentType) {
+            contentType = contentType || '';
+            const sliceSize = 512;
+            const byteCharacters = atob(b64Data);
+            const byteArrays = [];
+
+            for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+                const slice = byteCharacters.slice(offset, offset + sliceSize);
+                const byteNumbers = new Array(slice.length);
+                for (let i = 0; i < slice.length; i++) {
+                    byteNumbers[i] = slice.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                byteArrays.push(byteArray);
+            }
+
+            return new Blob(byteArrays, { type: contentType });
+        }
+    </script>
+</body>
+</html>
